@@ -2,9 +2,9 @@
 Contributors: DannyCooper
 Tags: gdpr, dsgvo, google fonts, disable google fonts, optimize
 Requires at least: 4.8
-Tested up to: 6.7
+Tested up to: 6.9
 License: GPLv2 or later
-Stable tag: trunk
+Stable tag: 1.8.2
 
 Improve frontend performance by disabling Google Fonts. GDPR and DSGVO friendly.
 
@@ -16,6 +16,18 @@ Improve frontend performance by disabling [Google Fonts](https://wordpress.org/p
 While this plugin removes Google Fonts from as many themes and plugins as possible, some require additional steps, we have detailed those here: [Remove Google Fonts from WordPress](https://fontsplugin.com/remove-disable-google-fonts/)
 
 After installing this plugin, clear your website cache and test your site using the free [Google Fonts Checker](https://fontsplugin.com/google-fonts-checker).
+
+= New "Check Google Fonts" Feature =
+
+This plugin now includes a new "Check Google Fonts" feature. This feature allows you to check if Google Fonts are being loaded on your website. It does this by capturing the full HTML of the current page and checking for Google Fonts references.
+
+To use this feature, simply click the "Check Google Fonts" button in the admin bar. This will open a new window/tab with the results.
+
+The results will show you:
+
+* The number of Google Fonts that are being loaded
+* The URLs of the Google Fonts that are being loaded
+* The source of the Google Fonts that are being loaded
 
 = Plugin Compatibility =
 
