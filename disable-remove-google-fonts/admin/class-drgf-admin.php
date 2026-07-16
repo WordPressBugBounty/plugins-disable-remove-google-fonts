@@ -11,29 +11,21 @@
 class DRGF_Admin {
 
 	/**
-	 * Start up
+	 * Start up.
 	 */
 	public function __construct() {
-		register_activation_hook( DRGF_PLUGIN_FILE, array( $this, 'activate' ) );
-
-		add_action( 'admin_menu', array( $this, 'add_submenu' ), 10 );
+		add_action( 'admin_menu', array( $this, 'add_menu' ), 10 );
 		add_action( 'admin_init', array( $this, 'admin_redirect' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue' ) );
-		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue' ) );
-		add_action( 'wp_ajax_drgf_check_fonts', array( $this, 'ajax_check_fonts' ) );
-		add_action( 'wp_ajax_drgf_capture_current_page', array( $this, 'ajax_capture_current_page' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_admin_bar' ) );
 		add_action( 'admin_bar_menu', array( $this, 'add_admin_bar_menu' ), 100 );
-	}
-
-	function activate() {
-		add_option( 'drgf_do_activation_redirect', true );
+		add_action( 'wp_ajax_drgf_run_audit', array( $this, 'ajax_run_audit' ) );
 	}
 
 	/**
-	 * Redirect to the Google Fonts Welcome page.
+	 * Redirect to the welcome page after activation.
 	 */
-	function admin_redirect() {
-		// Check user capabilities.
+	public function admin_redirect() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
@@ -41,419 +33,120 @@ class DRGF_Admin {
 		if ( get_option( 'drgf_do_activation_redirect', false ) ) {
 			delete_option( 'drgf_do_activation_redirect' );
 			if ( ! isset( $_GET['activate-multi'] ) && ! is_network_admin() ) {
-				wp_safe_redirect( admin_url( 'themes.php?page=drgf' ) );
+				wp_safe_redirect( admin_url( 'admin.php?page=drgf' ) );
 				exit;
 			}
 		}
 	}
 
 	/**
-	 * Add options page
+	 * Register the top-level admin menu page.
 	 */
-	public function add_submenu() {
-		add_submenu_page(
-			'themes.php',
-			__( 'Google Fonts', 'disable-remove-google-fonts' ),
-			__( 'Google Fonts', 'disable-remove-google-fonts' ),
+	public function add_menu() {
+		$audit = drgf_get_font_audit();
+		$count = count( $audit['fonts'] );
+
+		$menu_title = __( 'Font Audit', 'disable-remove-google-fonts' );
+		if ( $count > 0 ) {
+			$menu_title .= sprintf(
+				' <span class="update-plugins count-%1$d"><span class="plugin-count">%1$d</span></span>',
+				$count
+			);
+		}
+
+		add_menu_page(
+			__( 'Google Fonts Audit', 'disable-remove-google-fonts' ),
+			$menu_title,
 			'manage_options',
 			'drgf',
 			array( $this, 'render_welcome_page' ),
-			50
-		);
-		
-		// Add results page.
-		add_submenu_page(
-			'themes.php',
-			__( 'Google Fonts Check Results', 'disable-remove-google-fonts' ),
-			__( 'Fonts Check Results', 'disable-remove-google-fonts' ),
-			'manage_options',
-			'drgf-results',
-			array( $this, 'render_results_page' ),
-			51
+			'data:image/svg+xml;base64,' . base64_encode( '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#a0a5aa" d="M12.24 10.285V14.4h6.806c-.275 1.765-2.056 5.174-6.806 5.174-4.095 0-7.439-3.389-7.439-7.574s3.345-7.574 7.439-7.574c2.33 0 3.891.989 4.785 1.849l3.254-3.138C18.189 1.186 15.479 0 12.24 0c-6.635 0-12 5.365-12 12s5.365 12 12 12c6.926 0 11.52-4.869 11.52-11.726 0-.788-.085-1.39-.189-1.989H12.24z"/></svg>' ),
+			59
 		);
 	}
 
 	/**
-	 * Add options page
+	 * Enqueue admin assets on the plugin page only.
+	 *
+	 * @param string $hook The current admin page hook.
 	 */
-	public function enqueue() {
-		// Only enqueue on admin pages or when admin bar is showing.
-		if ( ! is_admin() && ! is_admin_bar_showing() ) {
+	public function enqueue( $hook ) {
+		if ( 'toplevel_page_drgf' !== $hook ) {
 			return;
 		}
 
-		// Ensure Dashicons are available for the admin bar icon on the frontend.
-		wp_enqueue_style( 'dashicons' );
+		wp_enqueue_style( 'drgf-admin', esc_url( DRGF_DIR_URL . 'admin/style.css' ), array(), DRGF_VERSION );
+		wp_enqueue_script( 'drgf-admin', esc_url( DRGF_DIR_URL . 'admin/scripts.js' ), array( 'jquery' ), DRGF_VERSION, true );
 
-		wp_enqueue_style( 'drgf-admin', esc_url( DRGF_DIR_URL . 'admin/style.css' ), false, DRGF_VERSION );
-		wp_enqueue_script( 'drgf-admin', esc_url( DRGF_DIR_URL . 'admin/scripts.js' ), ['jquery'], DRGF_VERSION, true );
-		
-		// Localize script for AJAX.
 		wp_localize_script(
 			'drgf-admin',
-			'drgfCheck',
+			'drgfAudit',
 			array(
-				'ajaxurl'              => admin_url( 'admin-ajax.php' ),
-				'resultsPageUrl'       => admin_url( 'themes.php?page=drgf-results' ),
-				'nonce'                => wp_create_nonce( 'drgf_check_fonts' ),
-				'checkingText'         => __( 'Checking for Google Fonts...', 'disable-remove-google-fonts' ),
-				'fontsFoundText'       => __( 'Google Fonts detected!', 'disable-remove-google-fonts' ),
-				'noFontsText'          => __( 'No Google Fonts detected!', 'disable-remove-google-fonts' ),
-				'foundReferencesText'  => __( 'Found %1$d reference(s) across %2$d stylesheet(s).', 'disable-remove-google-fonts' ),
-				'referencesFoundText'  => __( 'References Found:', 'disable-remove-google-fonts' ),
-				'checkedStylesheetsText' => __( 'Checked %d stylesheet(s) and found no Google Fonts references.', 'disable-remove-google-fonts' ),
-				'errorText'            => __( 'Error:', 'disable-remove-google-fonts' ),
-				'unknownErrorText'     => __( 'An unknown error occurred.', 'disable-remove-google-fonts' ),
-				'timeoutErrorText'     => __( 'The check timed out. Please try again.', 'disable-remove-google-fonts' ),
-				'adminPageError'       => __( 'This feature is only available on public-facing pages. Please visit a frontend page to check for Google Fonts.', 'disable-remove-google-fonts' ),
+				'ajaxurl'   => admin_url( 'admin-ajax.php' ),
+				'nonce'     => wp_create_nonce( 'drgf_font_audit' ),
+				'homeUrl'   => home_url( '/' ),
+				'scanToken' => drgf_generate_scan_token(),
+				'i18n'      => array(
+					'scanning'     => __( 'Scanning your site for Google Fonts…', 'disable-remove-google-fonts' ),
+					'source'       => __( 'Source', 'disable-remove-google-fonts' ),
+					'noFontsTitle' => __( 'No Google Fonts detected', 'disable-remove-google-fonts' ),
+					'noFontsDesc'  => __( 'Your site is not loading any fonts from Google\'s servers.', 'disable-remove-google-fonts' ),
+					'errorTitle'   => __( 'Scan couldn\'t complete', 'disable-remove-google-fonts' ),
+					'errorDesc'    => sprintf(
+						/* translators: %s: link to online checker */
+						__( 'Your server may block loopback requests. Try clicking Re-scan, or use our %s instead.', 'disable-remove-google-fonts' ),
+						'<a href="https://fontsplugin.com/google-fonts-checker/" target="_blank">' . __( 'online Google Fonts checker', 'disable-remove-google-fonts' ) . '</a>'
+					),
+					'lastScanned'  => __( 'Last scanned:', 'disable-remove-google-fonts' ),
+					'fontFamilies' => __( 'font families detected', 'disable-remove-google-fonts' ),
+					'and'          => __( 'and', 'disable-remove-google-fonts' ),
+					'siteDomain'   => preg_replace( '(^https?://)', '', site_url( '', 'https' ) ),
+					'proHeading'   => __( 'Keep these fonts — host them locally', 'disable-remove-google-fonts' ),
+					/* translators: %1$s: font names, %2$s: site domain */
+					'proDesc'      => __( 'Your site was using %1$s. Serve them from %2$s instead — faster page loads, no third-party requests, and fully GDPR & DSGVO compliant.', 'disable-remove-google-fonts' ),
+					'proButton'    => __( 'Host Fonts Locally', 'disable-remove-google-fonts' ),
+					'proYourFonts' => __( 'Your chosen fonts', 'disable-remove-google-fonts' ),
+					'proVisitorsSee' => __( 'What visitors see now', 'disable-remove-google-fonts' ),
+					'proProof'     => __( 'One-click setup · No coding required', 'disable-remove-google-fonts' ),
+					/* translators: %d: number of font families (replaced in JS) */
+					'couldNotRemove' => __( 'font families could not be removed', 'disable-remove-google-fonts' ),
+					'unremovedDesc'  => __( 'These fonts are loaded from within CSS files and cannot be removed by this plugin.', 'disable-remove-google-fonts' ),
+					'emailUsPrefix'  => __( 'Need help? Our team can remove these for you — just', 'disable-remove-google-fonts' ),
+					'emailUsLink'    => __( 'drop us an email', 'disable-remove-google-fonts' ),
+				),
 			)
 		);
-	}
 
-	/**
-	 * AJAX handler for capturing current page HTML.
-	 */
-	public function ajax_capture_current_page() {
-		// Verify nonce.
-		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'drgf_check_fonts' ) ) {
-			wp_send_json_error( array( 'message' => __( 'Security check failed.', 'disable-remove-google-fonts' ) ) );
-		}
-
-		// Check user capabilities.
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'message' => __( 'You do not have permission to perform this action.', 'disable-remove-google-fonts' ) ) );
-		}
-
-		// Get the HTML from POST data.
-		if ( ! isset( $_POST['html'] ) ) {
-			wp_send_json_error( array( 'message' => __( 'No HTML provided.', 'disable-remove-google-fonts' ) ) );
-		}
-
-		// Get raw HTML (we need to preserve all content including scripts and styles for analysis).
-		$html = wp_unslash( $_POST['html'] );
-		// Only sanitize the URL, not the HTML content (we'll analyze it as-is).
-		$url = isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '';
-
-		// Store captured HTML temporarily (only until next check, then it's cleared).
-		// Note: We store the raw HTML without sanitization since we need it for analysis.
-		set_transient( 'drgf_captured_html', array(
-			'html'      => $html,
-			'url'       => $url,
-			'timestamp' => time(),
-		), 300 ); // 5 minutes max (just as a safety, but we clear it immediately after use)
-
-		wp_send_json_success( array( 'message' => __( 'Page HTML captured successfully.', 'disable-remove-google-fonts' ) ) );
-	}
-
-	/**
-	 * AJAX handler for checking Google Fonts.
-	 */
-	public function ajax_check_fonts() {
-		// Verify nonce.
-		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['nonce'] ) ), 'drgf_check_fonts' ) ) {
-			wp_send_json_error( array( 'message' => __( 'Security check failed.', 'disable-remove-google-fonts' ) ) );
-		}
-
-		// Check user capabilities.
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'message' => __( 'You do not have permission to perform this action.', 'disable-remove-google-fonts' ) ) );
-		}
-
-
-		// Run the check.
-		$result = drgf_check_google_fonts();
-
-		// Store results.
-		update_option( 'drgf_fonts_check_result', $result );
-		update_option( 'drgf_fonts_check_time', current_time( 'mysql' ) );
-
-		// Return JSON response.
-		wp_send_json_success( $result );
-	}
-
-	/**
-	 * Options page callback
-	 */
-	public function render_welcome_page() {
-		update_option( 'dismissed-drgf-welcome', true );
-		$site_url = site_url( '', 'https' );
-		$url      = preg_replace( '(^https?://)', '', $site_url );
-		?>
-		<style>
-		.notice {
-			display: none;
-		}
-		</style>
-			<div class="drgf-admin__wrap">
-				<div class="drgf-admin__content">
-					<div class="drgf-admin__content__header">
-						<h1>Your Quickstart Guide</h1>
-					</div>
-					<div class="drgf-admin__content__inner">
-						<p>Thank you for installing the <em>Remove Google Fonts</em> plugin!</p>
-						<p><strong>✅ Now the plugin is active, it will begin working right away.</strong></p>
-						
-						<h3>How This Plugin Works</h3>
-						<p>This plugin completely removes all references to Google Fonts from your website. That means that your website will no longer render  Google Fonts and will instead revert to a <a target="_blank" href="https://fontsplugin.com/web-safe-system-fonts/">fallback font</a>.</p>
-						<p>However, some services load Google Fonts within an embedded iFrame. These include YouTube, Google Maps and ReCaptcha. It's not possible for this plugin to remove those services for the reasons <a target="_blank" href="https://fontsplugin.com/remove-disable-google-fonts/#youtube">outlined here</a>.</p>
-						<h3>🔎 Check for Google Fonts</h3>
-						<p>To test your website, visit any page and use the admin bar menu button to check for Google Fonts.</p>
-						<img src="<?php echo esc_url( DRGF_DIR_URL . 'admin/check-google-fonts-button.jpg' ); ?>" alt="Admin Bar Menu">
-						<p>We also have a free online checker tool that you can test your website with here: <a target="_blank" href="https://fontsplugin.com/google-fonts-checker/">Google Fonts Checker</a>.</p>
-						<p>If there are any font requests still present, please <a target="_blank" href="https://wordpress.org/support/plugin/disable-remove-google-fonts/#new-post">create a support ticket</a> and our team will happily look into it for you.</p>
-						
-					<?php if ( function_exists( 'ogf_initiate' ) ) : ?>
-						<h3>⭐️ Fonts Plugin Pro</h3>
-						<p>Instead of removing the fonts completely, <a target="_blank" href="https://fontsplugin.com/drgf-upgrade">Fonts Plugin Pro</a> enables you to host the fonts from your <strong>own domain</strong> (<?php echo esc_html( $url ); ?>)  with the click of a button. Locally hosted fonts are more efficient, quicker to load and don't connect to any third-parties (GDPR & DSGVO-friendly).</p>
-						<a class="drgf-admin__button button" href="https://fontsplugin.com/drgf-upgrade" target="_blank">Learn More</a>
-					<?php else : ?>
-						<h3>⭐️ Host Google Fonts Locally</h3>
-						<p>Instead of removing the fonts completely, our <a href="https://fontsplugin.com/drgf-upgrade" target="_blank">Pro upgrade</a> enables you to host the fonts from your <strong>own domain</strong> (<?php echo esc_html( $url ); ?>)  with the click of a button. Locally hosted fonts are more efficient, quicker to load and don't connect to any third-parties (GDPR & DSGVO-friendly).</p>
-						<a class="drgf-admin__button button" href="https://fontsplugin.com/drgf-upgrade" target="_blank">Get Started</a>
-					<?php endif; ?>
-					</div>
-				</div>
-			</div>
-			<?php
-	}
-
-	/**
-	 * Results page callback
-	 */
-	public function render_results_page() {
-		// Check if we have captured HTML that needs to be analyzed.
-		$captured_html_data = get_transient( 'drgf_captured_html' );
-		$auto_check = false;
-		$header_check_time = '';
-		
-		// Auto-check if we have captured HTML (just captured, so it's fresh).
-		if ( $captured_html_data && isset( $captured_html_data['html'] ) ) {
-			$check_result = get_option( 'drgf_fonts_check_result', false );
-			$check_time   = get_option( 'drgf_fonts_check_time', false );
-			// Only auto-check if we don't have recent results (check was done before the capture).
-			if ( ! $check_time || ( isset( $captured_html_data['timestamp'] ) && strtotime( $check_time ) < $captured_html_data['timestamp'] ) ) {
-				$auto_check = true;
-			}
-		}
-		
-		// Get stored check results.
-		$check_result = get_option( 'drgf_fonts_check_result', false );
-		$check_time   = get_option( 'drgf_fonts_check_time', false );
-
-		// For the header, only show the check time if we are not in an auto-check state
-		// (i.e. the stored result is not older than the captured HTML we're about to analyze).
-		if ( ! $auto_check && $check_time ) {
-			$header_check_time = $check_time;
-		}
-		?>
-		<div class="wrap">
-			<h1><?php esc_html_e( 'Google Fonts Check Results', 'disable-remove-google-fonts' ); ?></h1>
-
-			<?php
-			// Get the URL from check results or captured HTML data.
-			$tested_url = '';
-			// Prefer the most recent captured HTML URL if available, otherwise fall back to stored result.
-			if ( $captured_html_data && isset( $captured_html_data['url'] ) ) {
-				$tested_url = $captured_html_data['url'];
-			} elseif ( $check_result && isset( $check_result['captured_url'] ) ) {
-				$tested_url = $check_result['captured_url'];
-			}
-			?>
-			
-			<?php if ( ! empty( $tested_url ) || $header_check_time ) : ?>
-				<p>
-					<?php if ( ! empty( $tested_url ) ) : ?>
-						<?php 
-							printf(
-								/* translators: %s: URL of tested page */
-								esc_html__( 'Tested page: %s', 'disable-remove-google-fonts' ),
-								'<strong>' . esc_html( $tested_url ) . '</strong>'
-							);
-						?>
-					<?php endif; ?>
-					<?php if ( $header_check_time ) : ?>
-						<?php if ( ! empty( $tested_url ) ) : ?> | <?php endif; ?>
-						<?php 
-							printf(
-								/* translators: %s: formatted date/time */
-								esc_html__( 'Checked: %s', 'disable-remove-google-fonts' ),
-								'<strong>' . esc_html( date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $header_check_time ) ) ) . '</strong>'
-							);
-						?>
-					<?php endif; ?>
-				</p>
-			<?php endif; ?>
-			
-			<div class="drgf-results-page">				
-				<div id="drgf-check-results" class="drgf-check-results">
-					<?php if ( $auto_check ) : ?>
-						<div class="drgf-check-result">
-							<p><?php esc_html_e( 'Analyzing captured page...', 'disable-remove-google-fonts' ); ?></p>
-						</div>
-					<?php elseif ( $check_result ) : ?>
-						<?php
-						$found_count = count( $check_result['references'] );
-						$status_class = $check_result['found'] ? 'drgf-check-warning' : 'drgf-check-success';
-						?>
-						<div class="drgf-check-result <?php echo esc_attr( $status_class ); ?>">
-							<?php if ( $check_result['found'] ) : ?>
-								<h2><?php esc_html_e( 'Google Fonts detected!', 'disable-remove-google-fonts' ); ?></h2>
-								<p><?php 
-									printf(
-										/* translators: %1$d: number of references, %2$d: number of stylesheets */
-										esc_html__( 'Found %1$d reference(s) across %2$d stylesheet(s).', 'disable-remove-google-fonts' ),
-										$found_count,
-										$check_result['stylesheets_checked']
-									);
-								?></p>
-								<?php if ( ! empty( $check_result['references'] ) ) : ?>
-									<h3><?php esc_html_e( 'References Found:', 'disable-remove-google-fonts' ); ?></h3>
-									<ul class="drgf-references-list">
-										<?php foreach ( $check_result['references'] as $ref ) : ?>
-											<li class="drgf-reference-item">
-												<strong><?php echo esc_html( $ref['source'] ); ?></strong>
-												<?php if ( ! empty( $ref['context'] ) ) : ?>
-													<br><em><?php echo esc_html( $ref['context'] ); ?></em>
-												<?php endif; ?>
-												<?php if ( ! empty( $ref['url'] ) ) : ?>
-													<br><code><?php echo esc_html( $ref['url'] ); ?></code>
-												<?php endif; ?>
-											</li>
-										<?php endforeach; ?>
-									</ul>
-								<?php endif; ?>
-							<?php else : ?>
-								<h2><?php esc_html_e( 'No Google Fonts detected!', 'disable-remove-google-fonts' ); ?></h2>
-								<p><?php 
-									printf(
-										/* translators: %d: number of stylesheets */
-										esc_html__( 'Checked %d stylesheet(s) and found no Google Fonts references.', 'disable-remove-google-fonts' ),
-										$check_result['stylesheets_checked']
-									);
-								?></p>
-							<?php endif; ?>
-							<?php if ( $check_time ) : ?>
-								<p class="drgf-check-time"><em><?php 
-									printf(
-										/* translators: %s: formatted date/time */
-										esc_html__( 'Last checked: %s', 'disable-remove-google-fonts' ),
-										esc_html( date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $check_time ) ) )
-									);
-								?></em></p>
-							<?php endif; ?>
-							<?php if ( ! empty( $check_result['error'] ) ) : ?>
-								<p class="drgf-check-error"><strong><?php esc_html_e( 'Error:', 'disable-remove-google-fonts' ); ?></strong> <?php echo esc_html( $check_result['error'] ); ?></p>
-							<?php endif; ?>
-						</div>
-					<?php elseif ( ! $auto_check && ! $check_result ) : ?>
-						<div class="drgf-admin__wrap">
-							<div class="drgf-admin__content">
-								<div class="drgf-admin__content__inner">
-									<h3>🔎 Check for Google Fonts</h3>
-									<p><?php esc_html_e( 'To test your website, visit any page and use the admin bar menu button to check for Google Fonts.', 'disable-remove-google-fonts' ); ?></p>
-									<img src="<?php echo esc_url( DRGF_DIR_URL . 'admin/check-google-fonts-button.jpg' ); ?>" alt="Admin Bar Menu">
-									<p><?php esc_html_e( 'We also have a free online checker tool that you can test your website with here:', 'disable-remove-google-fonts' ); ?> <a target="_blank" href="https://fontsplugin.com/google-fonts-checker/"><?php esc_html_e( 'Google Fonts Checker', 'disable-remove-google-fonts' ); ?></a>.</p>
-									<p><?php esc_html_e( 'If there are any font requests still present, please', 'disable-remove-google-fonts' ); ?> <a target="_blank" href="https://wordpress.org/support/plugin/disable-remove-google-fonts/#new-post"><?php esc_html_e( 'create a support ticket', 'disable-remove-google-fonts' ); ?></a> <?php esc_html_e( 'and our team will happily look into it for you.', 'disable-remove-google-fonts' ); ?></p>
-								</div>
-							</div>
-						</div>
-					<?php endif; ?>
-				</div>
-			</div>
-		</div>
-		<?php if ( $auto_check ) : ?>
-		<script>
-		jQuery( document ).ready( function() {
-			// Auto-trigger check when page loads if we have fresh captured HTML.
-			const $loading = jQuery( '#drgf-check-loading' );
-			const $results = jQuery( '#drgf-check-results' );
-
-			// Show loading state.
-			$loading.show();
-			$results.html( '<div class="drgf-check-result"><p>' + drgfCheck.checkingText + '</p></div>' );
-
-			// Make AJAX request.
-			jQuery.ajax(
-				{
-					url: drgfCheck.ajaxurl,
-					type: 'POST',
-					data: {
-						action: 'drgf_check_fonts',
-						nonce: drgfCheck.nonce,
-					},
-					timeout: 120000, // 120 seconds timeout.
-				}
-			)
-			.done( function( response ) {
-				if ( response.success && response.data ) {
-					const result = response.data;
-					let html = '';
-
-					if ( result.found ) {
-						const foundCount = result.references ? result.references.length : 0;
-						html = '<div class="drgf-check-result drgf-check-warning">';
-						html += '<h2>' + drgfCheck.fontsFoundText + '</h2>';
-						html += '<p>' + drgfCheck.foundReferencesText.replace( '%1$d', foundCount ).replace( '%2$d', result.stylesheets_checked || 0 ) + '</p>';
-
-						if ( result.references && result.references.length > 0 ) {
-							html += '<h3>' + drgfCheck.referencesFoundText + '</h3>';
-							html += '<ul class="drgf-references-list">';
-							result.references.forEach( function( ref ) {
-								html += '<li class="drgf-reference-item">';
-								html += '<strong>' + ref.source + '</strong>';
-								if ( ref.context ) {
-									html += '<br><em>' + ref.context + '</em>';
-								}
-								if ( ref.url ) {
-									html += '<br><code>' + ref.url + '</code>';
-								}
-								html += '</li>';
-							} );
-							html += '</ul>';
-						}
-						html += '</div>';
-					} else {
-						html = '<div class="drgf-check-result drgf-check-success">';
-						html += '<h2>' + drgfCheck.noFontsText + '</h2>';
-						html += '<p>' + drgfCheck.checkedStylesheetsText.replace( '%d', result.stylesheets_checked || 0 ) + '</p>';
-						html += '</div>';
-					}
-
-					if ( result.error ) {
-						html += '<p class="drgf-check-error"><strong>' + drgfCheck.errorText + '</strong> ' + result.error + '</p>';
-					}
-
-					$results.html( html );
-				} else {
-					const errorMsg = response.data && response.data.message ? response.data.message : drgfCheck.unknownErrorText;
-					$results.html( '<div class="drgf-check-result drgf-check-error"><p><strong>' + drgfCheck.errorText + '</strong> ' + errorMsg + '</p></div>' );
-				}
-			} )
-			.fail( function( jqXHR, textStatus ) {
-				let errorMsg = drgfCheck.unknownErrorText;
-				if ( textStatus === 'timeout' ) {
-					errorMsg = drgfCheck.timeoutErrorText;
-				} else if ( jqXHR.responseJSON && jqXHR.responseJSON.data && jqXHR.responseJSON.data.message ) {
-					errorMsg = jqXHR.responseJSON.data.message;
-				}
-				$results.html( '<div class="drgf-check-result drgf-check-error"><p><strong>' + drgfCheck.errorText + '</strong> ' + errorMsg + '</p></div>' );
-			} )
-			.always( function() {
-				$loading.hide();
-			} );
+		// Load removed fonts from Google for the preview cards.
+		$audit = drgf_get_font_audit();
+		$preview_fonts = array_filter( $audit['fonts'], function( $f ) {
+			return ! isset( $f['removable'] ) || $f['removable'];
 		} );
-		</script>
-		<?php endif; ?>
-		<?php
+		if ( ! empty( $preview_fonts ) ) {
+			$preview_url = drgf_build_preview_url( $preview_fonts );
+			if ( $preview_url ) {
+				wp_enqueue_style( 'drgf-font-preview', $preview_url, array(), null ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
+			}
+		}
 	}
 
 	/**
-	 * Add admin bar menu item.
+	 * Ensure Dashicons are available for the admin bar icon on the frontend.
+	 */
+	public function enqueue_admin_bar() {
+		if ( is_admin() || ! is_admin_bar_showing() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		wp_enqueue_style( 'dashicons' );
+	}
+
+	/**
+	 * Add admin bar menu item linking to the Font Audit page.
 	 *
 	 * @param WP_Admin_Bar $wp_admin_bar Admin bar instance.
 	 */
 	public function add_admin_bar_menu( $wp_admin_bar ) {
-		// Only show to users who can manage options.
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
@@ -463,23 +156,371 @@ class DRGF_Admin {
 			return;
 		}
 
+		$current_url = drgf_get_current_page_url();
+
 		$wp_admin_bar->add_menu(
 			array(
 				'id'    => 'drgf-check-fonts',
-				// Add a magnifying glass (search) Dashicon next to the label.
 				'title' => sprintf(
 					'<span class="ab-icon dashicons dashicons-search" aria-hidden="true" style="margin-top: 2px; margin-right: 3px;"></span> %s',
 					esc_html__( 'Check Google Fonts', 'disable-remove-google-fonts' )
 				),
-				'href'  => '#',
+				'href'  => admin_url(
+					'admin.php?page=drgf&drgf_rescan=1&drgf_scan_url=' . rawurlencode( $current_url )
+				),
 				'meta'  => array(
-					'class' => 'drgf-check-now-btn',
+					'target' => '_blank',
 				),
 			)
 		);
 	}
+
+	/**
+	 * AJAX handler — run the font audit.
+	 */
+	public function ajax_run_audit() {
+		check_ajax_referer( 'drgf_font_audit', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permission denied.', 'disable-remove-google-fonts' ) ) );
+		}
+
+		$scan_url = isset( $_POST['scan_url'] ) ? drgf_validate_scan_url( wp_unslash( $_POST['scan_url'] ) ) : '';
+		$html     = isset( $_POST['html'] ) ? wp_unslash( $_POST['html'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+		$result = drgf_run_font_audit( $scan_url, $html );
+
+		wp_send_json_success( $result );
+	}
+
+	/**
+	 * Render the main admin / welcome page.
+	 */
+	public function render_welcome_page() {
+		update_option( 'dismissed-drgf-welcome', true );
+
+		$site_url = site_url( '', 'https' );
+		$url      = preg_replace( '(^https?://)', '', $site_url );
+
+		$audit          = drgf_get_font_audit();
+		$needs_scan     = get_transient( 'drgf_needs_initial_scan' );
+		$has_results    = ! empty( $audit['scanned_at'] );
+		$force_rescan   = isset( $_GET['drgf_rescan'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$trigger_scan   = $force_rescan || ( $needs_scan && ! $has_results );
+		$scan_url       = '';
+
+		if ( isset( $_GET['drgf_scan_url'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$scan_url = drgf_validate_scan_url( wp_unslash( $_GET['drgf_scan_url'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		} elseif ( ! empty( $audit['scanned_url'] ) ) {
+			$scan_url = $audit['scanned_url'];
+		}
+
+		if ( $trigger_scan ) {
+			delete_transient( 'drgf_needs_initial_scan' );
+		}
+		?>
+		<style>.notice { display: none; }</style>
+
+		<div class="drgf-admin__wrap">
+			<div class="drgf-admin__content">
+				<div class="drgf-admin__content__header">
+					<h1><?php esc_html_e( 'Google Fonts Audit', 'disable-remove-google-fonts' ); ?></h1>
+				</div>
+				<div class="drgf-admin__content__inner">
+					<?php
+					$removed_count = 0;
+					foreach ( $audit['fonts'] as $f ) {
+						if ( ! isset( $f['removable'] ) || $f['removable'] ) {
+							$removed_count++;
+						}
+					}
+					?>
+					<div class="drgf-admin__success">
+						<?php if ( $removed_count > 0 ) : ?>
+							<p>&#x2705; <?php printf( esc_html__( 'The plugin is active and removing %d Google Font families from your site.', 'disable-remove-google-fonts' ), $removed_count ); ?></p>
+						<?php elseif ( ! empty( $audit['fonts'] ) ) : ?>
+							<p>&#x2705; <?php esc_html_e( 'The plugin is active and working to remove Google Fonts from your site.', 'disable-remove-google-fonts' ); ?></p>
+						<?php else : ?>
+							<p>&#x2705; <?php esc_html_e( 'The plugin is active and will automatically remove any Google Fonts from your site.', 'disable-remove-google-fonts' ); ?></p>
+						<?php endif; ?>
+					</div>
+
+					<h3><?php esc_html_e( 'How This Plugin Works', 'disable-remove-google-fonts' ); ?></h3>
+					<p>
+						<?php
+						printf(
+							/* translators: %s: link to web safe fonts article */
+							esc_html__( 'This plugin completely removes all references to Google Fonts from your website. That means that your website will no longer render Google Fonts and will instead revert to a %s.', 'disable-remove-google-fonts' ),
+							'<a target="_blank" href="https://fontsplugin.com/web-safe-system-fonts/">' . esc_html__( 'fallback font', 'disable-remove-google-fonts' ) . '</a>'
+						);
+						?>
+					</p>
+
+					<?php $this->render_font_audit( $audit, $trigger_scan, $scan_url ); ?>
+
+					<p class="drgf-admin__note">
+						<?php
+						printf(
+							/* translators: %s: link to article about YouTube etc. */
+							esc_html__( 'Note: Some services load Google Fonts within an embedded iFrame. These include YouTube, Google Maps and ReCaptcha. It\'s not possible for this plugin to remove those services for the reasons %s.', 'disable-remove-google-fonts' ),
+							'<a target="_blank" href="https://fontsplugin.com/remove-disable-google-fonts/#youtube">' . esc_html__( 'outlined here', 'disable-remove-google-fonts' ) . '</a>'
+						);
+						?>
+					</p>
+
+				</div>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the font audit section.
+	 *
+	 * @param array  $audit        Stored audit data.
+	 * @param bool   $trigger_scan Whether to auto-trigger a scan via JS.
+	 * @param string $scan_url     URL to scan (empty = homepage).
+	 */
+	private function render_font_audit( $audit, $trigger_scan, $scan_url = '' ) {
+		$fonts      = $audit['fonts'];
+		$scanned_at = $audit['scanned_at'];
+		$error      = isset( $audit['error'] ) ? $audit['error'] : '';
+		?>
+		<div class="drgf-audit" id="drgf-audit"<?php echo $scan_url ? ' data-scan-url="' . esc_attr( $scan_url ) . '"' : ''; ?>>
+			<div class="drgf-audit__header">
+				<div class="drgf-audit__header-left">
+					<h3 class="drgf-audit__title"><?php esc_html_e( 'Font audit', 'disable-remove-google-fonts' ); ?></h3>
+					<?php if ( $scanned_at && ! $trigger_scan ) : ?>
+						<span class="drgf-audit__meta">
+							<?php
+							$display_url = ! empty( $audit['scanned_url'] ) ? $audit['scanned_url'] : home_url( '/' );
+							echo wp_kses_post(
+								sprintf(
+									/* translators: %1$s: date, %2$d: number of fonts */
+									__( 'Last scanned: %1$s &middot; %2$d font families detected', 'disable-remove-google-fonts' ),
+									esc_html( date_i18n( get_option( 'date_format' ), strtotime( $scanned_at ) ) ),
+									count( $fonts )
+								)
+							);
+							?>
+						</span>
+						<span class="drgf-audit__meta">
+							<a href="<?php echo esc_url( $display_url ); ?>" target="_blank"><?php echo esc_html( drgf_truncate_url( $display_url ) ); ?></a>
+						</span>
+					<?php endif; ?>
+				</div>
+				<button type="button" class="button drgf-audit__rescan" id="drgf-rescan">
+					<svg class="drgf-audit__rescan-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+					<?php esc_html_e( 'Re-scan', 'disable-remove-google-fonts' ); ?>
+				</button>
+			</div>
+
+			<div id="drgf-audit-results">
+				<?php if ( $trigger_scan ) : ?>
+					<div class="drgf-audit__loading" id="drgf-audit-loading">
+						<span class="spinner is-active"></span>
+						<span><?php esc_html_e( 'Scanning your site for Google Fonts…', 'disable-remove-google-fonts' ); ?></span>
+					</div>
+				<?php elseif ( $error && strpos( $error, 'loopback_failed' ) === 0 ) : ?>
+					<?php $this->render_audit_error( $error ); ?>
+				<?php elseif ( ! empty( $fonts ) ) : ?>
+					<?php $this->render_audit_fonts( $fonts ); ?>
+				<?php elseif ( $scanned_at ) : ?>
+					<?php $this->render_audit_empty(); ?>
+				<?php endif; ?>
+			</div>
+		</div>
+
+		<?php if ( $trigger_scan ) : ?>
+			<script>
+			jQuery( document ).ready( function( $ ) {
+				$( '#drgf-rescan' ).trigger( 'click' );
+			} );
+			</script>
+		<?php endif; ?>
+		<?php
+	}
+
+	/**
+	 * Render the font cards when fonts were detected.
+	 *
+	 * @param array $fonts Font entries.
+	 */
+	private function render_audit_fonts( $fonts ) {
+		$removed   = array_values( array_filter( $fonts, function( $f ) {
+			return ! isset( $f['removable'] ) || $f['removable'];
+		} ) );
+		$unremoved = array_values( array_filter( $fonts, function( $f ) {
+			return isset( $f['removable'] ) && ! $f['removable'];
+		} ) );
+
+		if ( ! empty( $removed ) ) {
+			$this->render_pro_cta( $removed );
+		}
+
+		if ( ! empty( $unremoved ) ) {
+			$this->render_unremoved_fonts( $unremoved );
+		}
+	}
+
+	/**
+	 * Render the Pro upsell CTA with personalized font preview.
+	 *
+	 * @param array $fonts Detected font entries.
+	 */
+	private function render_pro_cta( $fonts ) {
+		$font_names   = wp_list_pluck( $fonts, 'name' );
+		$preview_fonts = $fonts;
+		$site_url     = site_url( '', 'https' );
+		$domain   = preg_replace( '(^https?://)', '', $site_url );
+
+		if ( count( $font_names ) > 2 ) {
+			$font_list = sprintf(
+				/* translators: %1$s: comma-separated font names, %2$s: last font name */
+				esc_html__( '%1$s and %2$s', 'disable-remove-google-fonts' ),
+				esc_html( implode( ', ', array_slice( $font_names, 0, -1 ) ) ),
+				esc_html( end( $font_names ) )
+			);
+		} elseif ( count( $font_names ) === 2 ) {
+			$font_list = sprintf(
+				/* translators: %1$s: first font, %2$s: second font */
+				esc_html__( '%1$s and %2$s', 'disable-remove-google-fonts' ),
+				esc_html( $font_names[0] ),
+				esc_html( $font_names[1] )
+			);
+		} else {
+			$font_list = esc_html( $font_names[0] );
+		}
+		?>
+		<div class="drgf-audit__pro-preview">
+			<div class="drgf-audit__pro-preview-row drgf-audit__pro-preview-row--header">
+				<span class="drgf-audit__pro-preview-label"><?php esc_html_e( 'Your chosen fonts', 'disable-remove-google-fonts' ); ?></span>
+				<span class="drgf-audit__pro-preview-label"><?php esc_html_e( 'What visitors see now', 'disable-remove-google-fonts' ); ?></span>
+			</div>
+			<?php foreach ( $preview_fonts as $pf ) : ?>
+				<div class="drgf-audit__pro-preview-row">
+					<p class="drgf-audit__pro-preview-text" style="font-family: '<?php echo esc_attr( $pf['name'] ); ?>', sans-serif;">
+						<?php echo esc_html( $pf['name'] ); ?> — The quick brown fox jumps over the lazy dog
+					</p>
+					<p class="drgf-audit__pro-preview-text drgf-audit__pro-preview-text--fallback">
+						<?php echo esc_html( $pf['name'] ); ?> — The quick brown fox jumps over the lazy dog
+					</p>
+				</div>
+			<?php endforeach; ?>
+		</div>
+
+		<div class="drgf-audit__pro-cta">
+			<div class="drgf-audit__pro-body">
+				<h3 class="drgf-audit__pro-heading"><?php esc_html_e( 'Keep these fonts — host them locally', 'disable-remove-google-fonts' ); ?></h3>
+				<p class="drgf-audit__pro-desc">
+					<?php
+					printf(
+						/* translators: %1$s: list of font names, %2$s: site domain */
+						esc_html__( 'Your site was using %1$s. Serve them from %2$s instead — faster page loads, no third-party requests, and fully GDPR & DSGVO compliant.', 'disable-remove-google-fonts' ),
+						'<strong>' . $font_list . '</strong>',
+						'<strong>' . esc_html( $domain ) . '</strong>'
+					);
+					?>
+				</p>
+				<div class="drgf-audit__pro-actions">
+					<a class="button button-primary drgf-audit__pro-button" href="https://fontsplugin.com/drgf-upgrade/" target="_blank">
+						<?php esc_html_e( 'Host Fonts Locally', 'disable-remove-google-fonts' ); ?> →
+					</a>
+					<span class="drgf-audit__pro-proof"><?php esc_html_e( 'One-click setup · No coding required', 'disable-remove-google-fonts' ); ?></span>
+				</div>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render a warning for fonts that could not be removed.
+	 *
+	 * @param array $fonts Non-removable font entries.
+	 */
+	private function render_unremoved_fonts( $fonts ) {
+		?>
+		<div class="drgf-audit__unremoved">
+			<p><strong>
+				<?php
+				printf(
+					/* translators: %d: number of font families */
+					esc_html__( '%d font families could not be removed', 'disable-remove-google-fonts' ),
+					count( $fonts )
+				);
+				?>
+			</strong></p>
+			<p><?php esc_html_e( 'These fonts are loaded from within CSS files and cannot be removed by this plugin.', 'disable-remove-google-fonts' ); ?></p>
+			<ul>
+				<?php foreach ( $fonts as $font ) : ?>
+					<li>
+						<?php echo esc_html( $font['name'] ); ?>
+						<?php if ( ! empty( $font['handle'] ) ) : ?>
+							<span class="drgf-audit__unremoved-source">&mdash; <?php echo esc_html( $font['handle'] ); ?></span>
+						<?php endif; ?>
+					</li>
+				<?php endforeach; ?>
+			</ul>
+			<?php
+				$font_names = array_map( function( $f ) { return $f['name']; }, $fonts );
+				$mailto_subject = rawurlencode( 'Help removing Google Fonts' );
+				$mailto_body    = rawurlencode( "Hi,\n\nI'm using the Disable & Remove Google Fonts plugin on " . home_url() . " and the following fonts could not be removed:\n\n- " . implode( "\n- ", $font_names ) . "\n\nCould you help me remove them?\n\nThanks" );
+			?>
+			<p><?php printf( esc_html__( 'Need help? Our team can remove these for you — just %1$sdrop us an email%2$s.', 'disable-remove-google-fonts' ), '<a href="mailto:team@fontsplugin.com?subject=' . $mailto_subject . '&body=' . $mailto_body . '">', '</a>' ); ?></p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the "no fonts detected" state.
+	 */
+	private function render_audit_empty() {
+		?>
+		<div class="drgf-audit__status drgf-audit__status--success">
+			<span class="dashicons dashicons-yes-alt"></span>
+			<div>
+				<p class="drgf-audit__status-title"><?php esc_html_e( 'No Google Fonts detected', 'disable-remove-google-fonts' ); ?></p>
+				<p class="drgf-audit__status-desc"><?php esc_html_e( 'Your site is not loading any fonts from Google\'s servers.', 'disable-remove-google-fonts' ); ?></p>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the loopback-error state.
+	 *
+	 * @param string $error Error message.
+	 */
+	private function render_audit_error( $error = '' ) {
+		$error_message = '';
+		if ( $error && strpos( $error, 'loopback_failed: ' ) === 0 ) {
+			$error_message = substr( $error, 17 );
+		}
+		?>
+		<div class="drgf-audit__status drgf-audit__status--warning">
+			<span class="dashicons dashicons-warning"></span>
+			<div>
+				<p class="drgf-audit__status-title"><?php esc_html_e( 'Scan couldn\'t complete', 'disable-remove-google-fonts' ); ?></p>
+				<p class="drgf-audit__status-desc">
+					<?php
+					printf(
+						/* translators: %s: link to online Google Fonts checker */
+						esc_html__( 'Your server may block loopback requests. Try clicking Re-scan, or use our %s instead.', 'disable-remove-google-fonts' ),
+						'<a href="https://fontsplugin.com/google-fonts-checker/" target="_blank">' . esc_html__( 'online Google Fonts checker', 'disable-remove-google-fonts' ) . '</a>'
+					);
+					?>
+				</p>
+				<?php if ( $error_message ) : ?>
+					<p class="drgf-audit__error-details" style="margin-top: 10px; font-size: 11px; opacity: 0.8; font-family: monospace;">
+						<?php echo esc_html( $error_message ); ?>
+					</p>
+				<?php endif; ?>
+			</div>
+		</div>
+		<?php
+	}
 }
 
-if ( is_admin() || is_admin_bar_showing() ) {
+if ( is_admin() || is_user_logged_in() ) {
 	$drgf_admin = new DRGF_Admin();
 }

@@ -6,6 +6,14 @@
  */
 
 /**
+ * Skip all removal logic when the font-audit bypass is active.
+ * This lets the loopback request see which fonts would normally load.
+ */
+if ( function_exists( 'drgf_is_bypass_active' ) && drgf_is_bypass_active() ) {
+	return;
+}
+
+/**
  * Remove DNS prefetch, preconnect and preload headers.
  *
  * This function removes the DNS prefetch, preconnect, and preload headers for Google Fonts.
@@ -64,10 +72,7 @@ function drgf_dequeue_fonts() {
 		return;
 	}
 
-	$allowed = apply_filters(
-		'drgf_exceptions',
-		[ 'olympus-google-fonts' ]
-	);
+	$allowed = apply_filters( 'drgf_exceptions', array() );
 
 	foreach ( $wp_styles->registered as $style ) {
 		$handle = $style->handle;
@@ -240,10 +245,7 @@ function drgf_dequeue_wpbakery_fonts() {
 		return;
 	}
 
-	$allowed = apply_filters(
-		'drgf_exceptions',
-		[ 'olympus-google-fonts' ]
-	);
+	$allowed = apply_filters( 'drgf_exceptions', array() );
 
 	foreach ( $wp_styles->registered as $style ) {
 		$handle = $style->handle;
@@ -357,3 +359,148 @@ function drgf_after_plugins_loaded() {
  * Dequeue Google Fonts loaded by Stackable.
  */
 add_filter( 'stackable_enqueue_font', '__return_false' );
+
+/**
+ * Whether the frontend HTML output buffer should run.
+ *
+ * @return bool
+ */
+function drgf_should_filter_output() {
+	if ( is_admin() || wp_doing_ajax() || wp_doing_cron() || is_feed() ) {
+		return false;
+	}
+
+	if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Start output buffering so inline Google Font CSS can be stripped.
+ */
+function drgf_start_output_buffer() {
+	if ( ! drgf_should_filter_output() ) {
+		return;
+	}
+
+	ob_start( 'drgf_filter_google_fonts_from_html' );
+}
+add_action( 'template_redirect', 'drgf_start_output_buffer', 0 );
+
+/**
+ * Strip Google Fonts from the full page HTML.
+ *
+ * @param string $html Page HTML.
+ * @return string
+ */
+function drgf_filter_google_fonts_from_html( $html ) {
+	if ( empty( $html ) || false === stripos( $html, 'font' ) ) {
+		return $html;
+	}
+
+	$allowed = apply_filters( 'drgf_exceptions', array() );
+
+	$html = preg_replace_callback(
+		'/<link[^>]*href=["\'][^"\']*fonts\.(googleapis|gstatic)\.com[^"\']*["\'][^>]*>\s*/i',
+		function ( $match ) use ( $allowed ) {
+			if ( drgf_tag_matches_allowed_handle( $match[0], $allowed ) ) {
+				return $match[0];
+			}
+			return '';
+		},
+		$html
+	);
+
+	$html = preg_replace_callback(
+		'/<style\b([^>]*)>(.*?)<\/style>/is',
+		function ( $matches ) use ( $allowed ) {
+			if ( drgf_tag_matches_allowed_handle( $matches[0], $allowed ) ) {
+				return $matches[0];
+			}
+			return drgf_strip_google_fonts_from_style_tag( $matches );
+		},
+		$html
+	);
+
+	return $html;
+}
+
+/**
+ * Check if an HTML tag's id attribute matches an allowed handle.
+ *
+ * WordPress outputs enqueued styles with id="handle-css" or id="handle-inline-css".
+ *
+ * @param string $tag     The full HTML tag.
+ * @param array  $allowed Allowed handle names.
+ * @return bool
+ */
+function drgf_tag_matches_allowed_handle( $tag, $allowed ) {
+	if ( ! preg_match( '/id=["\']([^"\']+)["\']/', $tag, $id_match ) ) {
+		return false;
+	}
+
+	$id = $id_match[1];
+
+	foreach ( $allowed as $handle ) {
+		if ( $id === $handle . '-css' || $id === $handle . '-inline-css' ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Remove Google Font rules from an inline <style> tag.
+ *
+ * @param array $matches Regex matches.
+ * @return string
+ */
+function drgf_strip_google_fonts_from_style_tag( $matches ) {
+	$attrs    = $matches[1];
+	$original = $matches[2];
+	$css      = drgf_strip_google_fonts_from_css( $original );
+
+	if ( $css === $original ) {
+		return $matches[0];
+	}
+
+	$without_comments = preg_replace( '/\/\*.*?\*\//s', '', $css );
+	if ( '' === trim( $without_comments ) ) {
+		return '';
+	}
+
+	return '<style' . $attrs . '>' . $css . '</style>';
+}
+
+/**
+ * Remove Google Font @font-face and @import rules from CSS.
+ *
+ * @param string $css CSS content.
+ * @return string
+ */
+function drgf_strip_google_fonts_from_css( $css ) {
+	if ( ! function_exists( 'drgf_contains_google_font_reference' ) || ! drgf_contains_google_font_reference( $css ) ) {
+		return $css;
+	}
+
+	$css = preg_replace_callback(
+		'/@font-face\s*\{[^}]*\}/is',
+		function ( $match ) {
+			return drgf_contains_google_font_reference( $match[0] ) ? '' : $match[0];
+		},
+		$css
+	);
+
+	$css = preg_replace(
+		'/@import\s+(?:url\(\s*)?["\']?[^;"\']*fonts\.(googleapis|gstatic)\.com[^;"\']*["\']?\s*\)?[^;]*;?/i',
+		'',
+		$css
+	);
+
+	$css = preg_replace( '/^\s*\/\*[^*]*\*\/\s*$/m', '', $css );
+
+	return trim( preg_replace( '/\n{3,}/', "\n\n", $css ) );
+}

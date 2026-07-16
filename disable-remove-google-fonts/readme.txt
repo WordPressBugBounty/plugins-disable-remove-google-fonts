@@ -2,9 +2,9 @@
 Contributors: DannyCooper
 Tags: gdpr, dsgvo, google fonts, disable google fonts, optimize
 Requires at least: 4.8
-Tested up to: 6.9
+Tested up to: 7.0
 License: GPLv2 or later
-Stable tag: 1.8.2
+Stable tag: 2.0.1
 
 Improve frontend performance by disabling Google Fonts. GDPR and DSGVO friendly.
 
@@ -15,19 +15,13 @@ Improve frontend performance by disabling [Google Fonts](https://wordpress.org/p
 
 While this plugin removes Google Fonts from as many themes and plugins as possible, some require additional steps, we have detailed those here: [Remove Google Fonts from WordPress](https://fontsplugin.com/remove-disable-google-fonts/)
 
-After installing this plugin, clear your website cache and test your site using the free [Google Fonts Checker](https://fontsplugin.com/google-fonts-checker).
+After installing this plugin, visit Appearance → Google Fonts to see the Font Audit results. You can also test your site using the free [Google Fonts Checker](https://fontsplugin.com/google-fonts-checker).
 
-= New "Check Google Fonts" Feature =
+= Font Audit =
 
-This plugin now includes a new "Check Google Fonts" feature. This feature allows you to check if Google Fonts are being loaded on your website. It does this by capturing the full HTML of the current page and checking for Google Fonts references.
+This plugin includes a Font Audit that shows you exactly which Google Font families your theme and plugins were trying to load — including the font weights and which stylesheet handle registered them. The audit runs automatically when you first activate the plugin and can be re-run at any time from the plugin's admin page under Appearance → Google Fonts.
 
-To use this feature, simply click the "Check Google Fonts" button in the admin bar. This will open a new window/tab with the results.
-
-The results will show you:
-
-* The number of Google Fonts that are being loaded
-* The URLs of the Google Fonts that are being loaded
-* The source of the Google Fonts that are being loaded
+Each detected font is displayed with a live preview rendered in its own typeface, so you can see at a glance what your site has stopped loading.
 
 = Plugin Compatibility =
 
