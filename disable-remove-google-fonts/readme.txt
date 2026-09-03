@@ -2,9 +2,9 @@
 Contributors: DannyCooper
 Tags: gdpr, dsgvo, google fonts, disable google fonts, optimize
 Requires at least: 4.8
-Tested up to: 7.0
+Tested up to: 7.1
 License: GPLv2 or later
-Stable tag: 2.0.1
+Stable tag: 2.0.2
 
 Improve frontend performance by disabling Google Fonts. GDPR and DSGVO friendly.
 
