@@ -165,8 +165,11 @@ class DRGF_Admin {
 					'<span class="ab-icon dashicons dashicons-search" aria-hidden="true" style="margin-top: 2px; margin-right: 3px;"></span> %s',
 					esc_html__( 'Check Google Fonts', 'disable-remove-google-fonts' )
 				),
-				'href'  => admin_url(
-					'admin.php?page=drgf&drgf_rescan=1&drgf_scan_url=' . rawurlencode( $current_url )
+				'href'  => wp_nonce_url(
+					admin_url(
+						'admin.php?page=drgf&drgf_rescan=1&drgf_scan_url=' . rawurlencode( $current_url )
+					),
+					'drgf_scan_url'
 				),
 				'meta'  => array(
 					'target' => '_blank',
@@ -202,15 +205,21 @@ class DRGF_Admin {
 		$site_url = site_url( '', 'https' );
 		$url      = preg_replace( '(^https?://)', '', $site_url );
 
+		// Both scan parameters come from the signed admin bar link. Without that
+		// signature they are ignored, so a crafted link cannot pick the target
+		// page or start a scan on the administrator's behalf.
+		$signed = isset( $_GET['_wpnonce'] )
+			&& wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'drgf_scan_url' );
+
 		$audit          = drgf_get_font_audit();
 		$needs_scan     = get_transient( 'drgf_needs_initial_scan' );
 		$has_results    = ! empty( $audit['scanned_at'] );
-		$force_rescan   = isset( $_GET['drgf_rescan'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$force_rescan   = $signed && isset( $_GET['drgf_rescan'] );
 		$trigger_scan   = $force_rescan || ( $needs_scan && ! $has_results );
 		$scan_url       = '';
 
-		if ( isset( $_GET['drgf_scan_url'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			$scan_url = drgf_validate_scan_url( wp_unslash( $_GET['drgf_scan_url'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( $signed && isset( $_GET['drgf_scan_url'] ) ) {
+			$scan_url = drgf_validate_scan_url( wp_unslash( $_GET['drgf_scan_url'] ) );
 		} elseif ( ! empty( $audit['scanned_url'] ) ) {
 			$scan_url = $audit['scanned_url'];
 		}

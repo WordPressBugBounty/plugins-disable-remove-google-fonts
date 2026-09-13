@@ -4,7 +4,7 @@ Tags: gdpr, dsgvo, google fonts, disable google fonts, optimize
 Requires at least: 4.8
 Tested up to: 7.1
 License: GPLv2 or later
-Stable tag: 2.0.2
+Stable tag: 2.0.3
 
 Improve frontend performance by disabling Google Fonts. GDPR and DSGVO friendly.
 
@@ -15,13 +15,13 @@ Improve frontend performance by disabling [Google Fonts](https://wordpress.org/p
 
 While this plugin removes Google Fonts from as many themes and plugins as possible, some require additional steps, we have detailed those here: [Remove Google Fonts from WordPress](https://fontsplugin.com/remove-disable-google-fonts/)
 
-After installing this plugin, visit Appearance → Google Fonts to see the Font Audit results. You can also test your site using the free [Google Fonts Checker](https://fontsplugin.com/google-fonts-checker).
+After installing this plugin, visit the Google Fonts Audit page in your admin menu to see the Font Audit results. You can also test your site using the free [Google Fonts Checker](https://fontsplugin.com/google-fonts-checker).
 
 = Font Audit =
 
-This plugin includes a Font Audit that shows you exactly which Google Font families your theme and plugins were trying to load — including the font weights and which stylesheet handle registered them. The audit runs automatically when you first activate the plugin and can be re-run at any time from the plugin's admin page under Appearance → Google Fonts.
+This plugin includes a Font Audit that shows you exactly which Google Font families your theme and plugins were trying to load and where they were loaded from. The audit runs automatically when you first activate the plugin and can be re-run at any time from the plugin's admin page.
 
-Each detected font is displayed with a live preview rendered in its own typeface, so you can see at a glance what your site has stopped loading.
+Each removed font is displayed with a live preview rendered in its own typeface, so you can see at a glance what your site has stopped loading. If any fonts are embedded in external CSS files and cannot be automatically removed, they are flagged separately so you know exactly what still needs attention.
 
 = Plugin Compatibility =
 

@@ -116,8 +116,9 @@ function drgf_run_font_audit( $scan_url = '', $html = '' ) {
 /**
  * Extract Google Font families from rendered HTML.
  *
- * Looks for <link> tags, @import statements, inline @font-face blocks,
- * and same-domain linked stylesheets that reference Google Fonts.
+ * Looks for <link> tags, inline <style> blocks and same-domain linked
+ * stylesheets that reference Google Fonts. @import statements are only read
+ * from inside CSS, never from arbitrary page text.
  *
  * @param string $html Full page HTML.
  * @return array Array of font entries, each with 'name', 'weights', 'handle'.
@@ -148,35 +149,7 @@ function drgf_extract_fonts_from_html( $html ) {
 		}
 	}
 
-	// 2. @import url(...) inside page HTML.
-	preg_match_all(
-		'/@import\s+url\(["\']?([^"\')]*fonts\.googleapis\.com\/css[^"\')]*)["\']?\)/i',
-		$html,
-		$imports
-	);
-
-	foreach ( $imports[1] as $url ) {
-		$parsed = drgf_parse_google_fonts_url( html_entity_decode( $url ) );
-		foreach ( $parsed as $font ) {
-			drgf_merge_font_entry( $fonts, $font['name'], $font['weights'], 'inline-css' );
-		}
-	}
-
-	// 3. Bare @import "https://fonts..." (without url()).
-	preg_match_all(
-		'/@import\s+["\']([^"\';]*fonts\.googleapis\.com\/css[^"\';]*)["\']/',
-		$html,
-		$bare_imports
-	);
-
-	foreach ( $bare_imports[1] as $url ) {
-		$parsed = drgf_parse_google_fonts_url( html_entity_decode( $url ) );
-		foreach ( $parsed as $font ) {
-			drgf_merge_font_entry( $fonts, $font['name'], $font['weights'], 'inline-css' );
-		}
-	}
-
-	// 4. Inline <style> blocks — @font-face and other Google Font references.
+	// 2. Inline <style> blocks — @font-face and other Google Font references.
 	if ( preg_match_all( '/<style[^>]*>(.*?)<\/style>/is', $html, $style_matches ) ) {
 		foreach ( $style_matches[0] as $index => $style_tag ) {
 			$handle = 'inline-css';
@@ -189,7 +162,7 @@ function drgf_extract_fonts_from_html( $html ) {
 		}
 	}
 
-	// 5. Same-domain linked stylesheets.
+	// 3. Same-domain linked stylesheets.
 	$site_domain = wp_parse_url( home_url(), PHP_URL_HOST );
 	$stylesheet_urls = drgf_extract_stylesheet_urls( $html, $site_domain );
 
@@ -217,6 +190,37 @@ function drgf_extract_fonts_from_html( $html ) {
 }
 
 /**
+ * Sanitize a font family name parsed out of a scanned page.
+ *
+ * Names come from third-party markup, so strip the characters that could break
+ * out of the markup or CSS they are later rendered into. Letters, digits and
+ * ordinary punctuation are left alone so non-Latin family names survive.
+ *
+ * @param string $name Raw font family name.
+ * @return string Sanitized name, or empty string if nothing usable remains.
+ */
+function drgf_sanitize_font_name( $name ) {
+	$name = wp_strip_all_tags( (string) $name );
+
+	// Drop control characters, quotes, angle brackets, backslashes and backticks.
+	$name = preg_replace( '/[\x00-\x1F\x7F"\'<>\\\\`]/u', '', $name );
+
+	if ( null === $name ) {
+		return '';
+	}
+
+	// Collapse runs of whitespace left behind.
+	$name = trim( preg_replace( '/\s+/u', ' ', $name ) );
+
+	// A real family name is short; anything longer is not one.
+	if ( mb_strlen( $name ) > 100 ) {
+		return '';
+	}
+
+	return $name;
+}
+
+/**
  * Merge a font entry into the collected fonts list.
  *
  * @param array  $fonts   Fonts list keyed by sanitized title.
@@ -225,7 +229,7 @@ function drgf_extract_fonts_from_html( $html ) {
  * @param string $handle  WordPress style handle or source label.
  */
 function drgf_merge_font_entry( &$fonts, $name, $weights, $handle = '', $removable = true ) {
-	$name = trim( $name );
+	$name = drgf_sanitize_font_name( $name );
 	if ( '' === $name ) {
 		return;
 	}
@@ -401,11 +405,16 @@ function drgf_extract_stylesheet_urls( $html, $site_domain ) {
 		return $stylesheet_urls;
 	}
 
+	$site_port = wp_parse_url( home_url( '/' ), PHP_URL_PORT );
+
 	foreach ( $matches[1] as $url ) {
 		$absolute_url      = drgf_make_absolute_url( $url, home_url( '/' ) );
 		$stylesheet_domain = wp_parse_url( $absolute_url, PHP_URL_HOST );
+		$stylesheet_port   = wp_parse_url( $absolute_url, PHP_URL_PORT );
 
-		if ( $stylesheet_domain === $site_domain ) {
+		// The port has to match too. Matching on host alone would accept
+		// http://<site host>:22/ and turn the scan into a port prober.
+		if ( $stylesheet_domain === $site_domain && (int) $stylesheet_port === (int) $site_port ) {
 			$stylesheet_urls[] = $absolute_url;
 		}
 	}
@@ -431,8 +440,15 @@ function drgf_make_absolute_url( $url, $base_url ) {
 		return $base_parts['scheme'] . ':' . $url;
 	}
 
+	// Keep the port, or a site served from a non-default port resolves its own
+	// stylesheets to the wrong origin and they are never read.
+	$authority = $base_parts['host'];
+	if ( ! empty( $base_parts['port'] ) ) {
+		$authority .= ':' . $base_parts['port'];
+	}
+
 	if ( strpos( $url, '/' ) === 0 ) {
-		return $base_parts['scheme'] . '://' . $base_parts['host'] . $url;
+		return $base_parts['scheme'] . '://' . $authority . $url;
 	}
 
 	$base_path = isset( $base_parts['path'] ) ? $base_parts['path'] : '/';
@@ -444,7 +460,53 @@ function drgf_make_absolute_url( $url, $base_url ) {
 
 	$base_dir = rtrim( $base_dir, '/' ) . '/';
 
-	return $base_parts['scheme'] . '://' . $base_parts['host'] . $base_dir . $url;
+	return $base_parts['scheme'] . '://' . $authority . $base_dir . $url;
+}
+
+/**
+ * Resolve a stylesheet URL to a readable file inside this install.
+ *
+ * The URL is parsed out of scanned page markup, so its path is untrusted. A
+ * plain str_replace() of the URL prefix would happily turn a href such as
+ * /wp-content/../../../../etc/passwd into a path outside the install, so the
+ * candidate is resolved with realpath() and rejected unless it still sits
+ * under the directory it claimed to come from. is_file() additionally rejects
+ * character devices, which file_get_contents() would otherwise read forever.
+ *
+ * @param string $url Stylesheet URL.
+ * @return string Absolute path to a readable file, or '' if there is none.
+ */
+function drgf_local_path_for_url( $url ) {
+	$roots = array(
+		content_url()  => WP_CONTENT_DIR,
+		includes_url() => ABSPATH . WPINC,
+	);
+
+	foreach ( $roots as $base_url => $base_dir ) {
+		if ( 0 !== strpos( $url, $base_url ) ) {
+			continue;
+		}
+
+		// Drop the cache-busting query string before touching the filesystem.
+		$candidate = strtok( str_replace( $base_url, $base_dir, $url ), '?' );
+
+		$real = realpath( $candidate );
+		$root = realpath( $base_dir );
+
+		if ( ! $real || ! $root ) {
+			continue;
+		}
+
+		if ( 0 !== strpos( $real, rtrim( $root, '/\\' ) . DIRECTORY_SEPARATOR ) ) {
+			continue;
+		}
+
+		if ( is_file( $real ) && is_readable( $real ) ) {
+			return $real;
+		}
+	}
+
+	return '';
 }
 
 /**
@@ -454,28 +516,12 @@ function drgf_make_absolute_url( $url, $base_url ) {
  * @return string
  */
 function drgf_fetch_stylesheet_content( $stylesheet_url ) {
-	// 1. Try to convert URL to local absolute path and use file_get_contents()
-	$wp_content_url = content_url();
-	if ( strpos( $stylesheet_url, $wp_content_url ) === 0 ) {
-		$local_path = str_replace( $wp_content_url, WP_CONTENT_DIR, $stylesheet_url );
-		$local_path = strtok( $local_path, '?' ); // Remove versioning query strings
-		if ( file_exists( $local_path ) && is_readable( $local_path ) ) {
-			$content = file_get_contents( $local_path );
-			if ( false !== $content ) {
-				return $content;
-			}
-		}
-	}
-
-	$wp_includes_url = includes_url();
-	if ( strpos( $stylesheet_url, $wp_includes_url ) === 0 ) {
-		$local_path = str_replace( $wp_includes_url, ABSPATH . WPINC . '/', $stylesheet_url );
-		$local_path = strtok( $local_path, '?' ); // Remove versioning query strings
-		if ( file_exists( $local_path ) && is_readable( $local_path ) ) {
-			$content = file_get_contents( $local_path );
-			if ( false !== $content ) {
-				return $content;
-			}
+	// 1. Read the file directly when it really lives inside this install.
+	$local_path = drgf_local_path_for_url( $stylesheet_url );
+	if ( $local_path ) {
+		$content = file_get_contents( $local_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		if ( false !== $content ) {
+			return $content;
 		}
 	}
 

@@ -79,7 +79,7 @@ jQuery( document ).ready( function( $ ) {
 						}
 					}
 					var $meta = $( '.drgf-audit__meta' );
-					var urlLine = '<span class="drgf-audit__meta"><a href="' + escHtml(displayUrl) + '" target="_blank">' + escHtml(truncatedUrl) + '</a></span>';
+					var urlLine = '<span class="drgf-audit__meta"><a href="' + escAttr(displayUrl) + '" target="_blank">' + escHtml(truncatedUrl) + '</a></span>';
 					if ( $meta.length ) {
 						$meta.first().html( escHtml( drgfAudit.i18n.lastScanned ) + ' ' + metaText );
 						if ( $meta.length > 1 ) {
@@ -268,7 +268,7 @@ jQuery( document ).ready( function( $ ) {
 	}
 
 	function escAttr( str ) {
-		return escHtml( str ).replace( /'/g, '&#039;' );
+		return escHtml( str ).replace( /"/g, '&quot;' ).replace( /'/g, '&#039;' );
 	}
 
 } );

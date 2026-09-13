@@ -1,3 +1,9 @@
+= 2.0.3 =
+
+* Security: Fixed a cross-site scripting issue in the Font Audit results
+* Security: Font Audit scans now require a valid nonce, and only read files from within the WordPress install
+* Fix: Detect stylesheets correctly on sites served from a non-standard port
+
 = 2.0.2 =
 
 * Tested with WP7.1
